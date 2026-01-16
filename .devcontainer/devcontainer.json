@@ -1,0 +1,37 @@
+{
+    "name": "ClaudeGeminiTmux",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.vscode-json",
+                "ms-vscode.xml",
+                "editorconfig.editorconfig"
+            ],
+            "settings": {
+                "geminicodeassist.updateChannel": "Insiders",
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.profiles.linux": {
+                    "bash": {
+                        "path": "/bin/bash",
+                        "args": ["--rcfile", "/home/klab/.bashrc"]
+                    }
+                }
+            }
+        }
+    },
+    "mounts": [
+        "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+        "source=${localWorkspaceFolder}/.devcontainer/.bashrc,target=/home/klab/.bashrc,type=bind"
+    ],
+    "postCreateCommand": "bash .devcontainer/setup.sh",
+    "remoteUser": "klab",
+    "workspaceFolder": "/workspace",
+    "forwardPorts": [5000, 5001, 8080]
+}

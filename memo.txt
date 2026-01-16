@@ -1,0 +1,75 @@
+あなたは、世界トップレベルのmacOS/iOSアプリ開発スペシャリスト（SwiftUIエキスパート）です。
+現在、私は「AIアバター動画生成スタジオ（AyaseKoyomiStudio）」というmacOSアプリを新規開発しています。
+以下の「機能仕様書」と「ファイル構造」を元に、実装を担当してください。
+
+---
+
+## 1. ディレクトリ構造 (Xcode)
+現在、プロジェクトは以下の状態でセットアップ済みです。
+AyaseKoyomiStudio
+├── App
+│   └── AyaseKoyomiStudioApp.swift
+├── UI
+│   ├── ContentView.swift
+│   └── Components
+├── Modules
+│   ├── AIInfra      (API通信)
+│   ├── VoiceModule  (音声処理・TTS)
+│   ├── AvatarModule (画像処理・表情管理)
+│   ├── SceneModule  (背景管理)
+│   └── TimelineModule (シナリオ進行管理)
+└── Resources
+
+---
+
+## 2. 機能仕様書 (Version 3.1)
+この仕様を厳守してください。特にモジュール間の疎結合性を重視します。
+
+# AIアバター動画生成スタジオ 機能仕様書 v3.1
+
+**概要:**
+テキストを入力すると、キャラクターがAI生成音声で台本を読み上げ、表情豊かに解説する動画を自動生成するmacOSアプリ。
+
+**アーキテクチャ:**
+各機能は独立したモジュールとして実装し、UI層がそれらを指揮する。API通信は `AIInfra` が一元管理する。
+
+**モジュール詳細:**
+
+### 4.1 VoiceModule (音声・リップシンク)
+**責務:** 音声データの生成・管理・再生、およびリップシンク用の波形解析。
+* **Protocol:** `VoiceEngineDelegate` (再生終了、音量更新を通知)
+* **ロジック:** `AVAudioPlayer`を使用。`isMeteringEnabled`を有効にし、タイマーで音量を監視して正規化(0.0-1.0)した値を通知する。
+
+### 4.2 AvatarModule (キャラクター表現)
+**責務:** キャラクターの「状態」管理と、描画すべき画像IDの提供。
+* **ロジック:** 音量レベルを受け取り、口の開閉状態（Closed, Open, Wide）を決定してViewに通知する。
+
+### 4.3 SceneModule (背景・図解)
+**責務:** 背景レイヤーの生成と管理。
+
+### 4.4 TimelineModule (スクリプト管理)
+**責務:** 動画全体の構成データ（絵コンテ）の管理。
+
+### 4.5 ExportModule (動画・字幕書き出し)
+**責務:** 動画(.mp4)と字幕(.srt)の生成。
+
+---
+
+## 3. 今回のオーダー：VoiceModuleの実装
+
+まず、アプリの心臓部となる **VoiceEngine** を実装します。
+`Modules/VoiceModule` フォルダに配置する `VoiceEngine.swift` のコードを作成してください。
+
+**実装要件:**
+1. クラス名: `VoiceEngine`
+2. 継承: `NSObject`, `AVAudioPlayerDelegate`
+3. 責務:
+   - 外部から `Data` 型の音声データを受け取って再生する (`play(audioData:)`)
+   - 再生終了をDelegateで通知する (`audioDidFinishPlaying`)
+   - **重要:** 再生中の音量(Amplitude)をリアルタイム(約60fps)で監視し、0.0〜1.0 に正規化してDelegateで通知する (`audioAmplitudeDidUpdate`)
+4. 補足:
+   - `AVAudioPlayer` の `isMeteringEnabled` を必ず `true` に設定すること。
+   - 音量監視には `Timer` または `CADisplayLink` を使用すること。
+
+**出力:**
+そのままファイルにコピペできる `VoiceEngine.swift` の完全なコードのみを出力してください。解説は最低限で構いません。
