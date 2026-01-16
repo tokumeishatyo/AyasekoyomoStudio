@@ -18,9 +18,17 @@ final class VoiceEngine: NSObject {
     
     private var audioPlayer: AVAudioPlayer?
     private var meteringTimer: Timer?
+    private var simulationTimer: Timer?
+    private var simulationElapsed: TimeInterval = 0
+    
+    // MARK: - Simulation Constants
+    
+    private let simulationDuration: TimeInterval = 3.0
+    private let simulationInterval: TimeInterval = 0.05
     
     // MARK: - Public Methods
     
+    /// Play audio from Data
     func play(audioData: Data) {
         stop()
         
@@ -34,33 +42,44 @@ final class VoiceEngine: NSObject {
             audioPlayer?.play()
         } catch {
             print("VoiceEngine: Failed to initialize audio player - \(error.localizedDescription)")
-            delegate?.audioDidFinishPlaying() // エラー時も終了通知を送る
         }
+    }
+    
+    /// Simulate playback for debugging (no audio file required)
+    func simulatePlayback() {
+        stop()
+        
+        simulationElapsed = 0
+        
+        // 【修正】scheduledTimerではなく、Timer(...)で作ってからRunLoopに追加する形式にする
+        // これにより重複登録のリスクを完全に排除します
+        let timer = Timer(timeInterval: simulationInterval, repeats: true) { [weak self] _ in
+            self?.updateSimulation()
+        }
+        
+        RunLoop.current.add(timer, forMode: .common)
+        simulationTimer = timer
     }
     
     func stop() {
         stopMetering()
+        stopSimulation()
         audioPlayer?.stop()
         audioPlayer = nil
     }
     
-    // MARK: - Private Methods
+    // MARK: - Real Audio Metering
     
     private func startMetering() {
-        // 約60fps (1/60 ≈ 0.016秒) で音量を監視
         meteringTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.updateMetering()
         }
-        // スクロール中もタイマーを止めないようにCommonモードに追加
-        if let timer = meteringTimer {
-            RunLoop.current.add(timer, forMode: .common)
-        }
+        RunLoop.current.add(meteringTimer!, forMode: .common)
     }
     
     private func stopMetering() {
         meteringTimer?.invalidate()
         meteringTimer = nil
-        delegate?.audioAmplitudeDidUpdate(0.0)
     }
     
     private func updateMetering() {
@@ -70,18 +89,13 @@ final class VoiceEngine: NSObject {
         
         player.updateMeters()
         
-        // averagePowerForChannel returns dB value (-160 to 0)
         let decibels = player.averagePower(forChannel: 0)
-        
-        // Normalize to 0.0 - 1.0
         let normalizedAmplitude = normalizeDecibels(decibels)
         
         delegate?.audioAmplitudeDidUpdate(normalizedAmplitude)
     }
     
     private func normalizeDecibels(_ decibels: Float) -> Float {
-        // dB range: -160 (silent) to 0 (max)
-        // Using -50dB as practical minimum for speech
         let minDecibels: Float = -50.0
         let maxDecibels: Float = 0.0
         
@@ -92,9 +106,30 @@ final class VoiceEngine: NSObject {
             return 1.0
         }
         
-        // Linear interpolation
-        let normalized = (decibels - minDecibels) / (maxDecibels - minDecibels)
-        return normalized
+        return (decibels - minDecibels) / (maxDecibels - minDecibels)
+    }
+    
+    // MARK: - Simulation
+    
+    private func stopSimulation() {
+        simulationTimer?.invalidate()
+        simulationTimer = nil
+        simulationElapsed = 0
+    }
+    
+    private func updateSimulation() {
+        simulationElapsed += simulationInterval
+        
+        if simulationElapsed >= simulationDuration {
+            stopSimulation()
+            delegate?.audioAmplitudeDidUpdate(0.0)
+            delegate?.audioDidFinishPlaying()
+            return
+        }
+        
+        // Generate random amplitude (0.0 - 1.0)
+        let randomAmplitude = Float.random(in: 0.0...1.0)
+        delegate?.audioAmplitudeDidUpdate(randomAmplitude)
     }
 }
 
@@ -104,6 +139,7 @@ extension VoiceEngine: AVAudioPlayerDelegate {
     
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         stopMetering()
+        delegate?.audioAmplitudeDidUpdate(0.0)
         delegate?.audioDidFinishPlaying()
     }
     
@@ -112,6 +148,7 @@ extension VoiceEngine: AVAudioPlayerDelegate {
         if let error = error {
             print("VoiceEngine: Decode error - \(error.localizedDescription)")
         }
+        delegate?.audioAmplitudeDidUpdate(0.0)
         delegate?.audioDidFinishPlaying()
     }
 }
