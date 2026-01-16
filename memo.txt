@@ -1,75 +1,30 @@
-あなたは、世界トップレベルのmacOS/iOSアプリ開発スペシャリスト（SwiftUIエキスパート）です。
-現在、私は「AIアバター動画生成スタジオ（AyaseKoyomiStudio）」というmacOSアプリを新規開発しています。
-以下の「機能仕様書」と「ファイル構造」を元に、実装を担当してください。
+現状の `GeminiClient.swift` のコードを確認しました。
+Google Cloud TTS を使用する方針で実装を進めますが、現在のコードには「フリーズの原因となる重い処理」と「変数名の不一致」があるため、修正が必要です。
 
----
+以下の要件に従って、`GeminiClient.swift` と `ContentView.swift` を書き換えてください。
 
-## 1. ディレクトリ構造 (Xcode)
-現在、プロジェクトは以下の状態でセットアップ済みです。
-AyaseKoyomiStudio
-├── App
-│   └── AyaseKoyomiStudioApp.swift
-├── UI
-│   ├── ContentView.swift
-│   └── Components
-├── Modules
-│   ├── AIInfra      (API通信)
-│   ├── VoiceModule  (音声処理・TTS)
-│   ├── AvatarModule (画像処理・表情管理)
-│   ├── SceneModule  (背景管理)
-│   └── TimelineModule (シナリオ進行管理)
-└── Resources
+## 1. GeminiClient (Modules/AIInfra/GeminiClient.swift)
+**修正要件:**
+1. **APIキーの統一:**
+   - コード内で `APIKeyManager.cloudTTSApiKey` が使われていますが、これは間違いです。
+   - 既に実装済みの `APIKeyManager.apiKey` (ユーザーが画面で入力する変数) を使用してください。
+2. **危険なフォールバックの削除:**
+   - `generateFallbackAudio()` メソッドに含まれる `for` ループによる波形生成処理は、メインスレッドをブロックしフリーズの原因となるため、**完全に削除**してください。
+   - TTSリクエストが失敗した場合は、単純にエラーを `throw` するか、空の `Data()` を返してログを出すだけにしてください。
+3. **TTSリクエスト仕様:**
+   - URL: `https://texttospeech.googleapis.com/v1/text:synthesize`
+   - Header: `X-Goog-Api-Key`: `APIKeyManager.apiKey`
+   - Voice params: `{ "languageCode": "ja-JP", "name": "ja-JP-Neural2-B" }`
 
----
-
-## 2. 機能仕様書 (Version 3.1)
-この仕様を厳守してください。特にモジュール間の疎結合性を重視します。
-
-# AIアバター動画生成スタジオ 機能仕様書 v3.1
-
-**概要:**
-テキストを入力すると、キャラクターがAI生成音声で台本を読み上げ、表情豊かに解説する動画を自動生成するmacOSアプリ。
-
-**アーキテクチャ:**
-各機能は独立したモジュールとして実装し、UI層がそれらを指揮する。API通信は `AIInfra` が一元管理する。
-
-**モジュール詳細:**
-
-### 4.1 VoiceModule (音声・リップシンク)
-**責務:** 音声データの生成・管理・再生、およびリップシンク用の波形解析。
-* **Protocol:** `VoiceEngineDelegate` (再生終了、音量更新を通知)
-* **ロジック:** `AVAudioPlayer`を使用。`isMeteringEnabled`を有効にし、タイマーで音量を監視して正規化(0.0-1.0)した値を通知する。
-
-### 4.2 AvatarModule (キャラクター表現)
-**責務:** キャラクターの「状態」管理と、描画すべき画像IDの提供。
-* **ロジック:** 音量レベルを受け取り、口の開閉状態（Closed, Open, Wide）を決定してViewに通知する。
-
-### 4.3 SceneModule (背景・図解)
-**責務:** 背景レイヤーの生成と管理。
-
-### 4.4 TimelineModule (スクリプト管理)
-**責務:** 動画全体の構成データ（絵コンテ）の管理。
-
-### 4.5 ExportModule (動画・字幕書き出し)
-**責務:** 動画(.mp4)と字幕(.srt)の生成。
-
----
-
-## 3. 今回のオーダー：VoiceModuleの実装
-
-まず、アプリの心臓部となる **VoiceEngine** を実装します。
-`Modules/VoiceModule` フォルダに配置する `VoiceEngine.swift` のコードを作成してください。
-
-**実装要件:**
-1. クラス名: `VoiceEngine`
-2. 継承: `NSObject`, `AVAudioPlayerDelegate`
-3. 責務:
-   - 外部から `Data` 型の音声データを受け取って再生する (`play(audioData:)`)
-   - 再生終了をDelegateで通知する (`audioDidFinishPlaying`)
-   - **重要:** 再生中の音量(Amplitude)をリアルタイム(約60fps)で監視し、0.0〜1.0 に正規化してDelegateで通知する (`audioAmplitudeDidUpdate`)
-4. 補足:
-   - `AVAudioPlayer` の `isMeteringEnabled` を必ず `true` に設定すること。
-   - 音量監視には `Timer` または `CADisplayLink` を使用すること。
+## 2. ContentView (UI/ContentView.swift)
+**修正要件:**
+- 画面構成は「APIキー入力欄」「アバター」「テキスト入力」「スタートボタン」のままでOK。
+- **実行ロジック (Button Action):**
+  1. `geminiClient.generateScript(prompt: ...)` でテキスト生成。
+  2. 生成されたテキストを画面に表示。
+  3. `geminiClient.generateSpeech(text: ...)` で音声データ(`Data`)を取得。
+  4. 取得したデータを `avatarManager.speak(audioData: ...)` に渡して再生開始。
+  - ※これらを `Task` ブロック内で順次実行する。
 
 **出力:**
-そのままファイルにコピペできる `VoiceEngine.swift` の完全なコードのみを出力してください。解説は最低限で構いません。
+修正および統合された `GeminiClient.swift` と `ContentView.swift` の完全なコードを出力してください。

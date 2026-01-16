@@ -92,3 +92,19 @@ APIキーをコード内に直接書くことはセキュリティリスクが�
 
 * **方法A (簡易):** `.gitignore` に登録した `Secrets.swift` ファイルを作り、そこに定数として定義する。
 * **方法B (推奨):** `.xcconfig` ファイルを作成して環境変数として管理し、`Info.plist` 経由で読み込む。
+
+
+## 7．ネットワーク接続を許可する
+Xcodeの左側のナビゲータで、一番上の青いアイコン AyaseKoyomiStudio をクリックします。
+
+右側の画面で TARGETS の AyaseKoyomiStudio を選択します。
+
+上部タブの Signing & Capabilities をクリックします。
+
+画面の中に App Sandbox という項目があるはずです。
+
+その中の Network というセクションにある：
+
+Outgoing Connections (Client) のチェックボックスを ON (☑️) にしてください。
+
+(※もし App Sandbox という項目自体が見当たらない場合) 左上の + Capability ボタンを押し、「Sandbox」と検索して App Sandbox を追加してから、上記のチェックを入れてください。
