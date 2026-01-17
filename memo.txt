@@ -1,30 +1,48 @@
-現状の `GeminiClient.swift` のコードを確認しました。
-Google Cloud TTS を使用する方針で実装を進めますが、現在のコードには「フリーズの原因となる重い処理」と「変数名の不一致」があるため、修正が必要です。
+現在、macOS向けのSwiftUIアプリ「AIアバター動画生成スタジオ」を開発しています。
+Lv.1（テキスト生成、TTS音声生成、画面上でのリップシンク）は完了しています。
+次は **Lv.2：生成された音声に合わせてアバターが動く動画ファイル(MP4)を書き出す機能** を実装します。
 
-以下の要件に従って、`GeminiClient.swift` と `ContentView.swift` を書き換えてください。
+以下の要件に従って、2つのファイルを実装・修正してください。
 
-## 1. GeminiClient (Modules/AIInfra/GeminiClient.swift)
-**修正要件:**
-1. **APIキーの統一:**
-   - コード内で `APIKeyManager.cloudTTSApiKey` が使われていますが、これは間違いです。
-   - 既に実装済みの `APIKeyManager.apiKey` (ユーザーが画面で入力する変数) を使用してください。
-2. **危険なフォールバックの削除:**
-   - `generateFallbackAudio()` メソッドに含まれる `for` ループによる波形生成処理は、メインスレッドをブロックしフリーズの原因となるため、**完全に削除**してください。
-   - TTSリクエストが失敗した場合は、単純にエラーを `throw` するか、空の `Data()` を返してログを出すだけにしてください。
-3. **TTSリクエスト仕様:**
-   - URL: `https://texttospeech.googleapis.com/v1/text:synthesize`
-   - Header: `X-Goog-Api-Key`: `APIKeyManager.apiKey`
-   - Voice params: `{ "languageCode": "ja-JP", "name": "ja-JP-Neural2-B" }`
+## 1. 新規作成: Modules/VideoExportManager.swift
+このクラスは、音声データを受け取り、フレームごとにアバターを描画してMP4動画を生成します。
 
-## 2. ContentView (UI/ContentView.swift)
-**修正要件:**
-- 画面構成は「APIキー入力欄」「アバター」「テキスト入力」「スタートボタン」のままでOK。
-- **実行ロジック (Button Action):**
-  1. `geminiClient.generateScript(prompt: ...)` でテキスト生成。
-  2. 生成されたテキストを画面に表示。
-  3. `geminiClient.generateSpeech(text: ...)` で音声データ(`Data`)を取得。
-  4. 取得したデータを `avatarManager.speak(audioData: ...)` に渡して再生開始。
-  - ※これらを `Task` ブロック内で順次実行する。
+**技術要件:**
+- **クラス設計:** `VideoExportManager` (Singleton, NSObject)
+- **主要メソッド:** `func exportVideo(audioData: Data, completion: @escaping (Result<URL, Error>) -> Void)`
+- **使用フレームワーク:** `AVFoundation`, `CoreImage`, `AppKit`
+- **動画仕様:**
+  - サイズ: 1080x1080 (スクエア)
+  - フレームレート: 30fps
+  - コーデック: H.264
+- **処理フロー:**
+  1. `AVAssetWriter` を初期化（出力先は一時フォルダ）。
+  2. 入力された `audioData` を一時ファイル(WAV等)として保存し、`AVAudioFile` として読み込む。
+  3. **音声書き込み:** `AVAssetWriterInput` (audio) に音声データを追加する。
+  4. **映像書き込み (リップシンク描画):**
+     - 音声の長さ分だけループ処理を行う。
+     - 各フレームの時刻における「音声の振幅（音量）」を `AVAudioFile/AVAudioPCMBuffer` から取得する。
+     - 取得した音量(0.0〜1.0)に基づいて「口の開き具合」を決定する。
+     - `CoreGraphics` (CGContext) を使って、`CVPixelBuffer` にアバターを描画する。
+     - アバターの描画内容:
+       - 背景: 白
+       - 顔: 薄い黄色 (円形)
+       - 目: 黒 (楕円)
+       - 口: 赤 (楕円)。音量に応じて高さが変わる。
+     - 描画したバッファを `AVAssetWriterInputPixelBufferAdaptor` に追加する。
+  5. 処理完了後、生成された一時ファイルのURLを返す。
 
-**出力:**
-修正および統合された `GeminiClient.swift` と `ContentView.swift` の完全なコードを出力してください。
+## 2. 修正: UI/ContentView.swift
+生成された動画を保存するためのUIを追加します。
+
+**変更点:**
+- `generatedAudioData: Data?` と `isExporting: Bool` のState変数を追加。
+- 「生成・再生スタート」処理が成功した際、`generatedAudioData` に音声データを保持する。
+- 画面下部（再生ボタンの下など）に「動画として保存」ボタンを追加する。
+  - `generatedAudioData` がある時のみ表示。
+  - ボタンを押すと `NSSavePanel` を表示し、保存先を選択させる。
+  - 選択後、`VideoExportManager.shared.exportVideo` を呼び出して動画を書き出す。
+  - 書き出し中はボタンを無効化し、インジケータ等を表示する。
+
+**出力形式:**
+実装および修正された `Modules/VideoExportManager.swift` と `UI/ContentView.swift` の完全なコードを出力してください。

@@ -139,4 +139,62 @@ final class GeminiClient {
         
         return audioData
     }
+    /// Google Text-to-Speech API を叩いて音声を生成する
+    func generateAudio(text: String, apiKey: String) async throws -> Data {
+        // エンドポイント (Google Cloud Text-to-Speech)
+        let urlString = "https://texttospeech.googleapis.com/v1/text:synthesize?key=\(apiKey)"
+        guard let url = URL(string: urlString) else {
+            throw URLError(.badURL)
+        }
+        
+        // リクエストボディ作成
+        let parameters: [String: Any] = [
+            "input": ["text": text],
+            "voice": [
+                "languageCode": "ja-JP",
+                "name": "ja-JP-Neural2-B" // 女性の声 (Neural2推奨)
+                // "name": "ja-JP-Neural2-C" // 男性の声ならこちら
+            ],
+            "audioConfig": [
+                "audioEncoding": "MP3",
+                "speakingRate": 1.0,
+                "pitch": 0.0,
+                "sampleRateHertz": 44100
+            ]
+        ]
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: parameters)
+        
+        // APIコール
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            // エラー詳細を出力
+            if let errorText = String(data: data, encoding: .utf8) {
+                print("TTS Error: \(errorText)")
+            }
+            throw URLError(.badServerResponse)
+        }
+        
+        // レスポンスの解析 (Base64文字列が入っている)
+        let decoder = JSONDecoder()
+        let ttsResponse = try decoder.decode(TTSResponse.self, from: data)
+        
+        // Base64をData型に変換
+        guard let audioData = Data(base64Encoded: ttsResponse.audioContent) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        
+        return audioData
+    }
+    
+    // ▼▼▼ ファイルの末尾またはクラスの外に配置 ▼▼▼
+    
+    // TTS APIのレスポンスを受け取るための構造体
+    struct TTSResponse: Codable {
+        let audioContent: String
+    }
 }
