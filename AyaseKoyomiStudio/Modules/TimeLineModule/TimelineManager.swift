@@ -1,15 +1,13 @@
 import Foundation
 import SwiftUI
 import Combine
+import AVFoundation
 import UniformTypeIdentifiers
 
 @MainActor
 final class TimelineManager: ObservableObject {
     @Published var blocks: [ScriptBlock] = []
-    
-    // 生成中かどうか
     @Published var isProcessing: Bool = false
-    // エラーメッセージ用
     @Published var errorMessage: String? = nil
     
     // APIキー（UIから受け取る）
@@ -17,20 +15,20 @@ final class TimelineManager: ObservableObject {
     
     init() {
         blocks = [
-            ScriptBlock(text: "こんにちは！"),
-            ScriptBlock(text: "これはタイムライン機能のテストです。"),
-            ScriptBlock(text: "うまく動画になるでしょうか？")
+            ScriptBlock(text: "こんにちは！", emotion: .happy),
+            ScriptBlock(text: "ここでは感情を変えるテストをします。", emotion: .neutral),
+            ScriptBlock(text: "怒った顔もできますよ！", emotion: .angry),
+            ScriptBlock(text: "ちゃんと反映されるかな？", emotion: .happy)
         ]
     }
     
-    // MARK: - CRUD (変更なし)
+    // MARK: - CRUD
     func addBlock() { blocks.append(ScriptBlock()) }
     func removeBlock(at index: Int) { blocks.remove(at: index) }
     func moveBlock(from source: IndexSet, to destination: Int) { blocks.move(fromOffsets: source, toOffset: destination) }
     
     // MARK: - 🎬 監督機能 (Director)
     
-    /// すべてのセリフを繋げて動画を作成する
     func compileAndExport() async {
         guard !apiKey.isEmpty else {
             errorMessage = "APIキーを入力してください"
@@ -41,33 +39,74 @@ final class TimelineManager: ObservableObject {
         errorMessage = nil
         
         do {
-            // 1. 脚本の結合
-            // 全ブロックのテキストを「。」で繋いで1つの文章にします
-            // ※ 将来的にはブロックごとに音声を生成して結合する方式に進化させます
-            let fullScript = blocks.map { $0.text }.joined(separator: "。")
-            print("📜 脚本: \(fullScript)")
+            print("🎬 監督: 制作開始。ブロック数: \(blocks.count)")
             
-            // 2. 音声生成 (GeminiClientを利用)
-            // ※ お手持ちのGeminiClientの実装に合わせて呼び出し名を調整してください
-            print("🎙️ 音声生成中...")
-            let audioData = try await GeminiClient.shared.generateAudio(text: fullScript, apiKey: apiKey)
+            // 1. 各ブロックの音声を生成し、データを結合する
+            var masterAudioData = Data()
+            var scenes: [VideoScene] = []
+            var currentTime: Double = 0.0
             
-            // 3. 動画書き出し (VideoExportManagerを利用)
+            // ひとつずつ順番に処理 (API制限に注意しつつ)
+            for (index, block) in blocks.enumerated() {
+                if block.text.isEmpty { continue }
+                
+                print("🎙️ 生成中 (\(index + 1)/\(blocks.count)): \(block.text)")
+                
+                // A. 音声生成
+                let audioData = try await GeminiClient.shared.generateAudio(text: block.text, apiKey: apiKey)
+                
+                // B. 音声の長さ(秒)を測る
+                let duration = try getAudioDuration(data: audioData)
+                
+                // C. シーンデータを作成 (開始時間〜終了時間 + 感情)
+                let scene = VideoScene(
+                    startTime: currentTime,
+                    endTime: currentTime + duration,
+                    emotion: block.emotion.rawValue // "😊 笑顔" などを渡す
+                )
+                scenes.append(scene)
+                
+                // D. データを連結・時間を進める
+                masterAudioData.append(audioData)
+                currentTime += duration
+                
+                // ※連続API呼び出しのエラー回避のため、少しだけ待機
+                try await Task.sleep(nanoseconds: 200_000_000) // 0.2秒
+            }
+            
+            print("🎞️ シーン構築完了: 総時間 \(String(format: "%.2f", currentTime))秒")
+            
+            // 2. 動画書き出し (シーン情報も渡す！)
             print("🎥 動画レンダリング中...")
-            let videoURL = try await VideoExportManager.shared.exportVideo(audioData: audioData)
+            let videoURL = try await VideoExportManager.shared.exportVideo(audioData: masterAudioData, scenes: scenes)
             
-            // 4. 保存パネルを開く
+            // 3. 保存
             showSavePanel(for: videoURL)
             
         } catch {
             print("❌ エラー: \(error.localizedDescription)")
-            errorMessage = "エラー: \(error.localizedDescription)"
+            errorMessage = "制作失敗: \(error.localizedDescription)"
         }
         
         isProcessing = false
     }
     
-    /// 保存パネルを表示してファイルを移動する
+    // MARK: - Helper: 音声データの長さを測る
+    
+    /// バイナリデータの音声を一時ファイルに書き出して、AVAudioFileで長さを正確に測る
+    private func getAudioDuration(data: Data) throws -> Double {
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp3")
+        try data.write(to: tempURL)
+        
+        let audioFile = try AVAudioFile(forReading: tempURL)
+        let duration = Double(audioFile.length) / audioFile.processingFormat.sampleRate
+        
+        try? FileManager.default.removeItem(at: tempURL)
+        return duration
+    }
+    
+    // MARK: - Helper: 保存パネル
+    
     private func showSavePanel(for tempURL: URL) {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.mpeg4Movie]
@@ -83,9 +122,6 @@ final class TimelineManager: ObservableObject {
                         try FileManager.default.removeItem(at: targetURL)
                     }
                     try FileManager.default.moveItem(at: tempURL, to: targetURL)
-                    print("✅ 保存完了: \(targetURL.path)")
-                    
-                    // 完了時にファイルを開く
                     NSWorkspace.shared.open(targetURL)
                 } catch {
                     print("❌ 保存失敗: \(error)")

@@ -3,7 +3,13 @@ import Foundation
 import CoreImage
 import AppKit
 
-// ★★★ クラス全体を MainActor にしてUIスレッドで管理 ★★★
+// ★★★ 演出指示書 (どの時間にどんな顔をするか) ★★★
+struct VideoScene: Sendable {
+    let startTime: Double
+    let endTime: Double
+    let emotion: String // "happy", "angry", "sad", "neutral"
+}
+
 @MainActor
 final class VideoExportManager: NSObject {
     
@@ -28,9 +34,9 @@ final class VideoExportManager: NSObject {
         }
     }
     
-    // ★★★ nonisolated でメインスレッドから切り離して実行 ★★★
-    nonisolated func exportVideo(audioData: Data) async throws -> URL {
-        print("🎥 Export: 開始")
+    // ★★★ 変更点: scenes (指示書リスト) を受け取るように変更 ★★★
+    nonisolated func exportVideo(audioData: Data, scenes: [VideoScene]) async throws -> URL {
+        print("🎥 Export: 開始 (シーン数: \(scenes.count))")
         
         let tempDir = FileManager.default.temporaryDirectory
         let uuid = UUID().uuidString
@@ -77,7 +83,7 @@ final class VideoExportManager: NSObject {
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: sampleRate,
             AVNumberOfChannelsKey: audioFormat.channelCount,
-            AVEncoderBitRateKey: 128000
+            AVEncoderBitRateKey: 64000
         ])
         audioInput.expectsMediaDataInRealTime = false
         
@@ -106,11 +112,11 @@ final class VideoExportManager: NSObject {
         let targetVideoSize = self.videoSize
         let targetFrameRate = self.frameRate
         
-        // ★★★ コンパイラチェックを回避するための安全な箱 ★★★
         struct VideoContext: @unchecked Sendable {
             let input: AVAssetWriterInput
             let adaptor: AVAssetWriterInputPixelBufferAdaptor
             let buffer: AVAudioPCMBuffer
+            let scenes: [VideoScene] // ★コンテキストにもシーンを含める
         }
         
         struct AudioContext: @unchecked Sendable {
@@ -118,7 +124,8 @@ final class VideoExportManager: NSObject {
             let output: AVAssetReaderTrackOutput
         }
         
-        let videoCtx = VideoContext(input: videoInput, adaptor: pixelBufferAdaptor, buffer: audioBuffer)
+        // context作成
+        let videoCtx = VideoContext(input: videoInput, adaptor: pixelBufferAdaptor, buffer: audioBuffer, scenes: scenes)
         let audioCtx = AudioContext(input: audioInput, output: readerOutput)
         
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -129,22 +136,24 @@ final class VideoExportManager: NSObject {
                     let videoQueue = DispatchQueue(label: "videoQueue")
                     var frameIndex = 0
                     
-                    // ★★★ 修正ポイント: ここで videoCtx (箱) を使って呼び出す ★★★
-                    // 中身 (input) をローカル変数にしてから呼び出すと、その変数がキャプチャされてWarningになるため
                     videoCtx.input.requestMediaDataWhenReady(on: videoQueue) {
-                        
-                        // ★★★ クロージャの「中」で箱を開ける ★★★
-                        // ここなら実行コンテキスト内なので安全にアクセスできる
                         let input = videoCtx.input
                         let adaptor = videoCtx.adaptor
                         let buffer = videoCtx.buffer
+                        let scenes = videoCtx.scenes
                         
                         while input.isReadyForMoreMediaData && frameIndex < totalVideoFrames {
                             let time = CMTime(value: CMTimeValue(frameIndex), timescale: targetFrameRate)
                             let seconds = Double(frameIndex) / Double(targetFrameRate)
                             
+                            // ★現在の時間にマッチするシーンを探す
+                            let currentScene = scenes.first { seconds >= $0.startTime && seconds < $0.endTime }
+                            let emotion = currentScene?.emotion ?? "neutral"
+                            
                             let volume = getVolume(at: seconds, audioBuffer: buffer, sampleRate: sampleRate)
-                            if let pixelBuffer = createPixelBuffer(videoSize: targetVideoSize, volume: volume) {
+                            
+                            // ★感情を渡して描画
+                            if let pixelBuffer = createPixelBuffer(videoSize: targetVideoSize, volume: volume, emotion: emotion) {
                                 adaptor.append(pixelBuffer, withPresentationTime: time)
                             }
                             frameIndex += 1
@@ -164,7 +173,6 @@ final class VideoExportManager: NSObject {
                 await withCheckedContinuation { continuation in
                     let audioQueue = DispatchQueue(label: "audioQueue")
                     
-                    // ★★★ 修正ポイント: 音声側も同様に箱 (audioCtx) を使う ★★★
                     audioCtx.input.requestMediaDataWhenReady(on: audioQueue) {
                         let input = audioCtx.input
                         let output = audioCtx.output
@@ -198,7 +206,7 @@ final class VideoExportManager: NSObject {
     }
 }
 
-// MARK: - Helper Functions (クラス外)
+// MARK: - Helper Functions
 
 private func getVolume(at time: Double, audioBuffer: AVAudioPCMBuffer, sampleRate: Double) -> Float {
     guard let data = audioBuffer.floatChannelData?[0] else { return 0 }
@@ -213,7 +221,8 @@ private func getVolume(at time: Double, audioBuffer: AVAudioPCMBuffer, sampleRat
     return min(1.0, (sum / Float(end - start + 1)) * 5.0)
 }
 
-private func createPixelBuffer(videoSize: CGSize, volume: Float) -> CVPixelBuffer? {
+// ★引数に emotion を追加
+private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String) -> CVPixelBuffer? {
     var pb: CVPixelBuffer?
     CVPixelBufferCreate(kCFAllocatorDefault, Int(videoSize.width), Int(videoSize.height), kCVPixelFormatType_32ARGB, nil, &pb)
     guard let buffer = pb else { return nil }
@@ -230,25 +239,50 @@ private func createPixelBuffer(videoSize: CGSize, volume: Float) -> CVPixelBuffe
     )
     
     if let ctx = context {
-        drawAvatar(videoSize: videoSize, context: ctx, volume: volume)
+        drawAvatar(videoSize: videoSize, context: ctx, volume: volume, emotion: emotion)
     }
     return buffer
 }
 
-private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float) {
+// ★感情による分岐を追加
+private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float, emotion: String) {
     let w = videoSize.width, h = videoSize.height
     let cx = w/2, cy = h/2
     
-    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    // 背景色: 感情によって変える
+    let bgColor: CGColor
+    switch emotion {
+    case "😊 笑顔": bgColor = CGColor(red: 1.0, green: 0.9, blue: 0.9, alpha: 1) // ピンク
+    case "😠 怒り": bgColor = CGColor(red: 0.2, green: 0.0, blue: 0.0, alpha: 1) // 暗い赤
+    case "😢 悲しみ": bgColor = CGColor(red: 0.8, green: 0.8, blue: 1.0, alpha: 1) // 薄い青
+    default:      bgColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1)       // 白
+    }
+    
+    context.setFillColor(bgColor)
     context.fill(CGRect(x: 0, y: 0, width: w, height: h))
     
+    // 顔の輪郭
     context.setFillColor(CGColor(red: 1.0, green: 0.95, blue: 0.7, alpha: 1))
     context.fillEllipse(in: CGRect(x: cx-300, y: cy-300, width: 600, height: 600))
     
+    // 目: 感情によって形や色を変える
     context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-    context.fillEllipse(in: CGRect(x: cx-120, y: cy+30, width: 40, height: 60))
-    context.fillEllipse(in: CGRect(x: cx+80, y: cy+30, width: 40, height: 60))
     
+    if emotion == "😠 怒り" {
+        // 吊り目っぽく
+        context.fill(CGRect(x: cx-120, y: cy+30, width: 40, height: 20))
+        context.fill(CGRect(x: cx+80, y: cy+30, width: 40, height: 20))
+    } else if emotion == "😊 笑顔" {
+        // アーチ状の目（簡易的に細く）
+        context.fillEllipse(in: CGRect(x: cx-120, y: cy+40, width: 40, height: 20))
+        context.fillEllipse(in: CGRect(x: cx+80, y: cy+40, width: 40, height: 20))
+    } else {
+        // 普通の目
+        context.fillEllipse(in: CGRect(x: cx-120, y: cy+30, width: 40, height: 60))
+        context.fillEllipse(in: CGRect(x: cx+80, y: cy+30, width: 40, height: 60))
+    }
+    
+    // 口 (パクパク)
     let mH = 10 + (70 * CGFloat(volume))
     context.setFillColor(CGColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1))
     context.fillEllipse(in: CGRect(x: cx-50, y: cy-100-mH/2, width: 100, height: mH))
