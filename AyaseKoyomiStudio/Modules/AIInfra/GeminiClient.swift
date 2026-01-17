@@ -113,7 +113,7 @@ final class GeminiClient {
         let requestBody: [String: Any] = [
             "input": ["text": text],
             "voice": ["languageCode": "ja-JP", "name": voiceStyle],
-            "audioConfig": ["audioEncoding": "LINEAR16", "sampleRateHertz": 44100]
+            "audioConfig": ["audioEncoding": "MP3", "sampleRateHertz": 44100]
         ]
         
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
