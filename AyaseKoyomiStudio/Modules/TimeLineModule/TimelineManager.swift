@@ -11,7 +11,12 @@ final class TimelineManager: ObservableObject {
     @Published var errorMessage: String? = nil
     
     // APIキー（UIから受け取る）
-    var apiKey: String = ""
+    var apiKey: String = "" {
+        didSet {
+            // ★レビュー修正: メモリ上のAPIKeyManagerにも同期する (GeminiClientが使用するため)
+            APIKeyManager.apiKey = apiKey
+        }
+    }
     
     init() {
         blocks = [
@@ -44,6 +49,7 @@ final class TimelineManager: ObservableObject {
             // 1. 各ブロックの音声を生成し、データを結合する
             var masterAudioData = Data()
             var scenes: [VideoScene] = []
+            var audioDurations: [Double] = [] // ★追加
             var currentTime: Double = 0.0
             
             // ひとつずつ順番に処理 (API制限に注意しつつ)
@@ -57,12 +63,13 @@ final class TimelineManager: ObservableObject {
                 
                 // B. 音声の長さ(秒)を測る
                 let duration = try getAudioDuration(data: audioData)
+                audioDurations.append(duration) // ★字幕用に長さを記録
                 
                 // C. シーンデータを作成 (開始時間〜終了時間 + 感情)
                 let scene = VideoScene(
                     startTime: currentTime,
                     endTime: currentTime + duration,
-                    emotion: block.emotion.rawValue // "😊 笑顔" などを渡す
+                    emotion: block.emotion.rawValue
                 )
                 scenes.append(scene)
                 
@@ -80,8 +87,22 @@ final class TimelineManager: ObservableObject {
             print("🎥 動画レンダリング中...")
             let videoURL = try await VideoExportManager.shared.exportVideo(audioData: masterAudioData, scenes: scenes)
             
-            // 3. 保存
-            showSavePanel(for: videoURL)
+            // 3. 字幕生成 & 翻訳
+            print("📝 字幕生成中...")
+            let jaSRT = SubtitleManager.shared.generateSRT(blocks: blocks, audioDurations: audioDurations)
+            
+            print("🔄 英語翻訳中...")
+            var enSRT = ""
+            do {
+                enSRT = try await SubtitleManager.shared.translateSRT(srtContent: jaSRT)
+            } catch {
+                print("⚠️ 翻訳失敗: \(error.localizedDescription) (日本語字幕のみ保存します)")
+                // 翻訳失敗しても処理は続行する
+            }
+            
+            // 4. 保存
+            let subtitleData = SubtitleData(ja: jaSRT, en: enSRT.isEmpty ? nil : enSRT)
+            showSavePanel(for: videoURL, subtitles: subtitleData)
             
         } catch {
             print("❌ エラー: \(error.localizedDescription)")
@@ -107,7 +128,7 @@ final class TimelineManager: ObservableObject {
     
     // MARK: - Helper: 保存パネル
     
-    private func showSavePanel(for tempURL: URL) {
+    private func showSavePanel(for tempURL: URL, subtitles: SubtitleData) {
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.mpeg4Movie]
         savePanel.canCreateDirectories = true
@@ -118,15 +139,34 @@ final class TimelineManager: ObservableObject {
         savePanel.begin { response in
             if response == .OK, let targetURL = savePanel.url {
                 do {
+                    // 動画保存
                     if FileManager.default.fileExists(atPath: targetURL.path) {
                         try FileManager.default.removeItem(at: targetURL)
                     }
                     try FileManager.default.moveItem(at: tempURL, to: targetURL)
-                    NSWorkspace.shared.open(targetURL)
+                    
+                    // 字幕保存 (.ja.srt)
+                    let jaURL = targetURL.deletingPathExtension().appendingPathExtension("ja.srt")
+                    try SubtitleManager.shared.saveSRT(content: subtitles.ja, to: jaURL)
+                    
+                    // 字幕保存 (.en.srt) - ある場合のみ
+                    if let enContent = subtitles.en {
+                        let enURL = targetURL.deletingPathExtension().appendingPathExtension("en.srt")
+                        try SubtitleManager.shared.saveSRT(content: enContent, to: enURL)
+                    }
+                    
+                    // フォルダを開く (動画自体ではなくフォルダを見せる方が親切かもだが、とりあえず動画を開く)
+                    NSWorkspace.shared.activateFileViewerSelecting([targetURL])
                 } catch {
                     print("❌ 保存失敗: \(error)")
                 }
             }
         }
     }
+}
+
+// 別ファイルに移動推奨だが、一旦ここで定義（スコープをTimelineManagerの外に出す）
+struct SubtitleData {
+    let ja: String
+    let en: String?
 }
