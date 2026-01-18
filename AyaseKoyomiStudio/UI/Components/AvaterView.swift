@@ -15,8 +15,8 @@ struct AvatarView: View {
                 
                 // Eyes
                 HStack(spacing: 50) {
-                    Eye()
-                    Eye()
+                    Eye(state: avatarManager.eyesState)
+                    Eye(state: avatarManager.eyesState)
                 }
                 .offset(y: -20)
                 
@@ -48,10 +48,27 @@ struct AvatarView: View {
 // MARK: - Eye Component
 
 private struct Eye: View {
+    let state: EyesState
+    
     var body: some View {
-        Ellipse()
-            .fill(Color.black)
-            .frame(width: 16, height: 20)
+        switch state {
+        case .open:
+            Ellipse()
+                .fill(Color.black)
+                .frame(width: 16, height: 20)
+        case .closed:
+            // 閉じた目 (横線)
+            Rectangle()
+                .fill(Color.black)
+                .frame(width: 18, height: 2)
+        case .smile:
+            // 笑った目 (アーチ)
+            Circle()
+                .trim(from: 0.0, to: 0.5)
+                .stroke(Color.black, lineWidth: 2)
+                .rotationEffect(.degrees(180))
+                .frame(width: 18, height: 18)
+        }
     }
 }
 

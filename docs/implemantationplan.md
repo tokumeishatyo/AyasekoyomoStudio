@@ -1,52 +1,35 @@
-実装計画 - SceneModule (Lv.2) 実装
+実装計画 - 自動瞬き機能 (Lv.1)
 ドキュメント 
 docs/残作業.txt
- および 
-docs/機能仕様書.md
- に基づき、未実装の SceneModule を実装し、背景画像の管理・生成・描画機能を提供します。
+ に基づき、自動瞬き機能 (Automatic Blinking) を実装します。これにより、キャラクターの自然さを向上させます。
 
 目標
-SceneManagerの実装: 背景画像の管理（インポート・生成・保存）。
-画像生成機能: Gemini API (imagen-3.0) を使用して背景画像を生成。
-動画書き出しへの統合: 単色背景ではなく、シーンに応じた画像背景を合成する。
-ユーザーレビュー事項
-IMPORTANT
-
-Gemini APIで画像生成を行うために、GeminiClient に画像生成用のメソッドを追加します。モデル名は imagen-3.0-generate-001 等を使用します。
-
+EyesStateの管理: AvatarManager に EyesState (Open, Closed, Smile) を追加。
+自動瞬きタイマー: 3.0〜5.0秒ごとにランダムで瞬きを実行するロジックを実装。
+描画への反映: VideoExportManager およびアバター表示UIに目の状態を反映させる。
 変更内容
-Modules/SceneModule
-[NEW] 
-SceneManager.swift
-責務:
-generateBackground(prompt: String) async throws -> URL: Geminiで画像を生成し、ローカルに保存してURLを返す。
-importBackground(url: URL) throws -> URL: 既存画像をアセットフォルダにコピー。
-背景リストの管理（IDとファイルパスの紐付け）。
-Modules/AIInfra
+Modules/AvatarModule
 [MODIFY] 
-GeminiClient.swift
-機能追加:
-generateImage(prompt: String) async throws -> Data: Imagen 3.0 APIを呼び出すメソッドを追加。
-Modules/TimeLineModule
-[MODIFY] 
-TimelineManager.swift
-連携:
-ScriptBlock に backgroundID (またはパス) を持たせる（既に定義はあるか確認、なければ追加）。
-動画書き出し時に、ScriptBlock の背景情報を VideoScene に含めて VideoExportManager に渡す。
+AvatarManager.swift
+Enum追加: EyesState (open, closed, smile)
+プロパティ追加: @Published var eyesState: EyesState = .open
+タイマーロジック:
+startBlinking(): 瞬きループを開始。
+scheduleNextBlink(): 3.0〜5.0秒後のランダムなタイミングで blink() をスケジュール。
+blink(): close → 0.1秒待機 → open の一連の動作を実行。
+連携: 音声再生開始時に瞬きロジックも有効化（または常時有効化するか検討、Lv.1ではアプリ起動中ずっと瞬きして良さそうだが、一旦 init で開始）。
 Modules/VideoModule
 [MODIFY] 
 VideoExportManager.swift
 描画更新:
-VideoScene 構造体に backgroundPath: URL? を追加。
-drawAvatar (または drawScene) メソッドで、背景画像がある場合は CGContext.draw で画像を描画し、その上にアバターを描画するように変更。
-現状の「感情による背景色変更」は、背景画像がない場合のフォールバックとして残す。
+drawAvatar メソッド内で、渡された eyesState に基づいて目の描画を変更。
+注意: 動画書き出し時はリアルタイムのタイマーではなく、疑似的なランダム性または固定パターンで瞬きを入れる必要がある（あるいは書き出しフローでは瞬きを省略するか、仕様を確認）。
+仕様再考: 動画書き出し (Lv.4) と リアルタイムプレビュー (Lv.1) は異なる。
+Lv.1: アプリ画面上のアバターが瞬きする。
+Lv.4: 動画に瞬きが含まれるか？ -> 機能仕様書 4.2 には「自動瞬き」とあるが、これは主にリアルタイム動作を指すことが多い。ただし動画にも反映されるべき。
+動画への反映方針: TimelineManager.compileAndExport 内で VideoScene を作る際、ブロックの長さに関わらず一定間隔で「瞬きシーン」を挿入するのは複雑になりすぎる。
+簡易方針: 今回はまず 「アプリ起動中のリアルタイム瞬き (AvatarManager)」 を優先実装する。VideoExportへの反映は、もし時間が許せば「ランダムに瞬きフレームを混ぜる」ロジックを検討するが、まずはUI上の動きを実装する。
 検証計画
-自動テスト
-今回はユーザービルドによる検証を主とします。
 手動検証
-ビルド & 実行: ユーザー側でアプリをビルド。
-確認フロー:
-UI（今回は実装範囲外だが、ロジック確認のためコンソール等で代用可か確認）から、またはコード上で SceneManager.generateBackground を呼び出すテストコードを一時的に追加。
-timeline の特定のブロックに背景画像を指定。
-Exportを実行。
-生成された動画で、指定した時間の背景が画像になっていることを確認。
+アプリを起動し、アバターが3〜5秒おきにパチパチと瞬きすることを確認する。
+喋っている間も瞬きすることを確認する。

@@ -9,6 +9,14 @@ enum MouthState {
     case wide
 }
 
+// MARK: - EyesState
+
+enum EyesState {
+    case open
+    case closed
+    case smile
+}
+
 // MARK: - AvatarManager
 
 final class AvatarManager: NSObject, ObservableObject {
@@ -16,11 +24,13 @@ final class AvatarManager: NSObject, ObservableObject {
     // MARK: - Published Properties
     
     @Published private(set) var mouthState: MouthState = .closed
+    @Published private(set) var eyesState: EyesState = .open // ★追加
     @Published private(set) var isPlaying: Bool = false
     
     // MARK: - Private Properties
     
     private let voiceEngine = VoiceEngine()
+    private var blinkTimer: Timer?
     
     // MARK: - Threshold Constants
     
@@ -32,6 +42,11 @@ final class AvatarManager: NSObject, ObservableObject {
     override init() {
         super.init()
         voiceEngine.delegate = self
+        startBlinking() // ★初期化時に瞬き開始
+    }
+    
+    deinit {
+        blinkTimer?.invalidate()
     }
     
     // MARK: - Public Methods
@@ -72,6 +87,34 @@ final class AvatarManager: NSObject, ObservableObject {
         
         if mouthState != newState {
             mouthState = newState
+        }
+    }
+    
+    // MARK: - Blinking Logic
+    
+    private func startBlinking() {
+        scheduleNextBlink()
+    }
+    
+    private func scheduleNextBlink() {
+        // 3.0〜5.0秒のランダムな間隔
+        let interval = Double.random(in: 3.0...5.0)
+        
+        blinkTimer?.invalidate()
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            self?.blink()
+        }
+    }
+    
+    private func blink() {
+        // 目を閉じる
+        eyesState = .closed
+        
+        // 0.1秒後に開ける
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            self.eyesState = .open
+            self.scheduleNextBlink() // 次の瞬きをスケジュール
         }
     }
 }
