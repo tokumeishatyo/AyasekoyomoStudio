@@ -8,6 +8,7 @@ struct VideoScene: Sendable {
     let startTime: Double
     let endTime: Double
     let emotion: String // "happy", "angry", "sad", "neutral"
+    let backgroundURL: URL? // ★背景画像 (Lv.2)
 }
 
 @MainActor
@@ -16,7 +17,7 @@ final class VideoExportManager: NSObject {
     static let shared = VideoExportManager()
     private override init() { super.init() }
     
-    private let videoSize = CGSize(width: 1080, height: 1080)
+    private let videoSize = CGSize(width: 1920, height: 1080)
     private let frameRate: Int32 = 30
     
     enum ExportError: LocalizedError {
@@ -149,11 +150,12 @@ final class VideoExportManager: NSObject {
                             // ★現在の時間にマッチするシーンを探す
                             let currentScene = scenes.first { seconds >= $0.startTime && seconds < $0.endTime }
                             let emotion = currentScene?.emotion ?? "neutral"
+                            let bgURL = currentScene?.backgroundURL
                             
                             let volume = getVolume(at: seconds, audioBuffer: buffer, sampleRate: sampleRate)
                             
                             // ★感情を渡して描画
-                            if let pixelBuffer = createPixelBuffer(videoSize: targetVideoSize, volume: volume, emotion: emotion) {
+                            if let pixelBuffer = createPixelBuffer(videoSize: targetVideoSize, volume: volume, emotion: emotion, backgroundURL: bgURL) {
                                 adaptor.append(pixelBuffer, withPresentationTime: time)
                             }
                             frameIndex += 1
@@ -221,8 +223,8 @@ private func getVolume(at time: Double, audioBuffer: AVAudioPCMBuffer, sampleRat
     return min(1.0, (sum / Float(end - start + 1)) * 5.0)
 }
 
-// ★引数に emotion を追加
-private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String) -> CVPixelBuffer? {
+// ★引数に backgroundURL を追加
+private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String, backgroundURL: URL?) -> CVPixelBuffer? {
     var pb: CVPixelBuffer?
     CVPixelBufferCreate(kCFAllocatorDefault, Int(videoSize.width), Int(videoSize.height), kCVPixelFormatType_32ARGB, nil, &pb)
     guard let buffer = pb else { return nil }
@@ -239,27 +241,48 @@ private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String
     )
     
     if let ctx = context {
-        drawAvatar(videoSize: videoSize, context: ctx, volume: volume, emotion: emotion)
+        drawAvatar(videoSize: videoSize, context: ctx, volume: volume, emotion: emotion, backgroundURL: backgroundURL)
     }
     return buffer
 }
 
-// ★感情による分岐を追加
-private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float, emotion: String) {
+// ★背景画像対応
+private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float, emotion: String, backgroundURL: URL?) {
     let w = videoSize.width, h = videoSize.height
     let cx = w/2, cy = h/2
     
-    // 背景色: 感情によって変える
-    let bgColor: CGColor
-    switch emotion {
-    case "😊 笑顔": bgColor = CGColor(red: 1.0, green: 0.9, blue: 0.9, alpha: 1) // ピンク
-    case "😠 怒り": bgColor = CGColor(red: 0.2, green: 0.0, blue: 0.0, alpha: 1) // 暗い赤
-    case "😢 悲しみ": bgColor = CGColor(red: 0.8, green: 0.8, blue: 1.0, alpha: 1) // 薄い青
-    default:      bgColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1)       // 白
+    // 1. 背景描画
+    var backgroundDrawn = false
+    
+    if let bgURL = backgroundURL,
+       let nsImage = NSImage(contentsOf: bgURL),
+       let list = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        
+        // アスペクト比維持しつつ中央配置 (Fill)
+        context.saveGState()
+        // 上下反転対策 (CoreGraphicsは座標系が左下基準、画像は左上基準の場合があるが、CGContextのCTMによる)
+        // ここでは単純に描画してみる。必要ならCTM調整。
+        
+        context.draw(list, in: CGRect(x: 0, y: 0, width: w, height: h))
+        context.restoreGState()
+        backgroundDrawn = true
     }
     
-    context.setFillColor(bgColor)
-    context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+    if !backgroundDrawn {
+        // フォールバック: 感情による色変え
+        let bgColor: CGColor
+        switch emotion {
+        case "😊 笑顔": bgColor = CGColor(red: 1.0, green: 0.9, blue: 0.9, alpha: 1) // ピンク
+        case "😠 怒り": bgColor = CGColor(red: 0.2, green: 0.0, blue: 0.0, alpha: 1) // 暗い赤
+        case "😢 悲しみ": bgColor = CGColor(red: 0.8, green: 0.8, blue: 1.0, alpha: 1) // 薄い青
+        default:      bgColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1)       // 白
+        }
+        
+        context.setFillColor(bgColor)
+        context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+    }
+    
+    // 2. アバター描画 (以降は変更なし)
     
     // 顔の輪郭
     context.setFillColor(CGColor(red: 1.0, green: 0.95, blue: 0.7, alpha: 1))

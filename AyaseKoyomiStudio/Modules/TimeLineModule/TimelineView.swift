@@ -4,6 +4,7 @@ import SwiftUI
 struct ScriptRowView: View {
     @Binding var block: ScriptBlock
     var onDelete: () -> Void
+    var onGenerateBackground: (String) -> Void // ★追加: プロンプトを受け取って生成処理へ渡す
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -19,6 +20,53 @@ struct ScriptRowView: View {
                     .cornerRadius(8)
             }
             .menuStyle(.borderlessButton)
+            
+            // 背景画像選択ボタン
+            Menu {
+                Button {
+                    showGenerateAlert = true
+                } label: {
+                    Label("AIで背景を生成...", systemImage: "sparkles")
+                }
+                
+                Divider()
+                
+                if SceneManager.shared.availableBackgrounds.isEmpty {
+                    Text("履歴なし").foregroundColor(.gray)
+                } else {
+                    ForEach(SceneManager.shared.availableBackgrounds, id: \.self) { url in
+                        Button {
+                            block.backgroundURL = url
+                        } label: {
+                            Label(url.lastPathComponent, systemImage: "photo")
+                        }
+                    }
+                }
+                
+                if block.backgroundURL != nil {
+                    Divider()
+                    Button(role: .destructive) {
+                        block.backgroundURL = nil
+                    } label: {
+                        Label("背景を削除", systemImage: "trash")
+                    }
+                }
+                
+            } label: {
+                Image(systemName: "photo")
+                    .foregroundColor(block.backgroundURL != nil ? .blue : .gray)
+                    .frame(width: 30, height: 30)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(8)
+            }
+            .menuStyle(.borderlessButton)
+            .alert("背景生成プロンプト", isPresented: $showGenerateAlert) {
+                TextField("例: 近未来の研究所、青い光", text: $promptText)
+                Button("生成", action: onGenerate)
+                Button("キャンセル", role: .cancel) { }
+            } message: {
+                Text("Geminiで背景画像を生成します。")
+            }
             
             TextField("セリフを入力...", text: $block.text, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -38,6 +86,15 @@ struct ScriptRowView: View {
         }
         .padding(.vertical, 8)
     }
+    
+    // MARK: - Private State
+    @State private var showGenerateAlert = false
+    @State private var promptText = ""
+    
+    private func onGenerate() {
+        onGenerateBackground(promptText)
+        promptText = ""
+    }
 }
 
 // MARK: - メイン画面
@@ -56,6 +113,10 @@ struct TimelineView: View {
                         ScriptRowView(block: $block, onDelete: {
                             if let index = manager.blocks.firstIndex(where: { $0.id == block.id }) {
                                 withAnimation { _ = manager.blocks.remove(at: index) }
+                            }
+                        }, onGenerateBackground: { prompt in
+                            Task {
+                                await manager.generateBackground(for: block.id, prompt: prompt)
                             }
                         })
                     }

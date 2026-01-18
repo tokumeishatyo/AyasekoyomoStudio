@@ -194,6 +194,66 @@ final class GeminiClient {
     // ▼▼▼ ファイルの末尾またはクラスの外に配置 ▼▼▼
     
     // TTS APIのレスポンスを受け取るための構造体
+    // MARK: - 機能C: 画像生成 (Imagen 3.0 REST API)
+    
+    func generateImage(prompt: String) async throws -> Data {
+        guard !APIKeyManager.apiKey.isEmpty else {
+            throw GeminiClientError.apiKeyMissing
+        }
+        
+        // Imagen on AI Studio endpoint (Subject to change, assuming generic predict/generate structure)
+        // Note: As of early 2025, AI Studio might use :predict for Imagen.
+        let model = "imagen-4.0-fast-generate-001"
+        let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(model):predict"
+        
+        guard let url = URL(string: "\(endpoint)?key=\(APIKeyManager.apiKey)") else {
+            throw GeminiClientError.apiRequestFailed("URLが無効です")
+        }
+        
+        // Request Body for Imagen
+        let requestBody: [String: Any] = [
+            "instances": [
+                ["prompt": prompt]
+            ],
+            "parameters": [
+                "sampleCount": 1,
+                "aspectRatio": "16:9" // or "16:9" considering video
+            ]
+        ]
+        
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonData
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GeminiClientError.invalidResponse
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            let errorText = String(data: data, encoding: .utf8) ?? "Unknown"
+            print("Imagen API Error: \(errorText)")
+            throw GeminiClientError.apiRequestFailed("Status \(httpResponse.statusCode): \(errorText)")
+        }
+        
+        // Response parsing (Assuming standard Vertex/AI Studio prediction response)
+        // Structure: { "predictions": [ { "bytesBase64Encoded": "..." } ] }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let predictions = json["predictions"] as? [[String: Any]],
+              let firstPrediction = predictions.first,
+              let base64String = firstPrediction["bytesBase64Encoded"] as? String,
+              let imageData = Data(base64Encoded: base64String) else {
+            throw GeminiClientError.invalidData
+        }
+        
+        return imageData
+    }
+    
+    // TTS APIのレスポンスを受け取るための構造体
     struct TTSResponse: Codable {
         let audioContent: String
     }

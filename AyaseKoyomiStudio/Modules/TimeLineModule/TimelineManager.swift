@@ -32,6 +32,23 @@ final class TimelineManager: ObservableObject {
     func removeBlock(at index: Int) { blocks.remove(at: index) }
     func moveBlock(from source: IndexSet, to destination: Int) { blocks.move(fromOffsets: source, toOffset: destination) }
     
+    /// 特定のブロックの背景画像を生成する
+    func generateBackground(for blockID: UUID, prompt: String) async {
+        guard let index = blocks.firstIndex(where: { $0.id == blockID }) else { return }
+        
+        do {
+            isProcessing = true
+            print("🎨 背景生成開始: \(prompt)")
+            let url = try await SceneManager.shared.generateBackground(prompt: prompt)
+            blocks[index].backgroundURL = url
+            print("🎨 背景セット完了: \(url.path)")
+        } catch {
+            print("❌ 背景生成失敗: \(error)")
+            errorMessage = "背景生成失敗: \(error.localizedDescription)"
+        }
+        isProcessing = false
+    }
+    
     // MARK: - 🎬 監督機能 (Director)
     
     func compileAndExport() async {
@@ -69,7 +86,8 @@ final class TimelineManager: ObservableObject {
                 let scene = VideoScene(
                     startTime: currentTime,
                     endTime: currentTime + duration,
-                    emotion: block.emotion.rawValue
+                    emotion: block.emotion.rawValue,
+                    backgroundURL: block.backgroundURL
                 )
                 scenes.append(scene)
                 

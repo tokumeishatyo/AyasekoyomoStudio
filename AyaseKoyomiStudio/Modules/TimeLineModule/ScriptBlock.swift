@@ -19,11 +19,15 @@ struct ScriptBlock: Identifiable, Codable {
     // 生成された音声データ
     var generatedAudio: Data?
     
+    // 背景画像URL (Lv.2)
+    var backgroundURL: URL?
+    
     // ★この init がないと TimelineManager でエラーになります
-    init(text: String = "", emotion: AvatarEmotion = .neutral) {
+    init(text: String = "", emotion: AvatarEmotion = .neutral, backgroundURL: URL? = nil) {
         self.id = UUID()
         self.text = text
         self.emotion = emotion
+        self.backgroundURL = backgroundURL
         self.generatedAudio = nil
     }
 }
