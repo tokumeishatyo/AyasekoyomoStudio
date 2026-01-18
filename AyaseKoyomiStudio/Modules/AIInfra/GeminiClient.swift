@@ -141,6 +141,13 @@ final class GeminiClient {
     }
     /// Google Text-to-Speech API を叩いて音声を生成する
     func generateAudio(text: String, apiKey: String) async throws -> Data {
+        // 1. キャッシュ確認
+        let cacheKey = CryptoUtils.sha256Hash(for: "audio_ja-JP-Neural2-B_" + text)
+        if let cachedData = CacheManager.shared.getAudio(key: cacheKey) {
+            print("🔊 キャッシュから音声を取得: \(text.prefix(10))...")
+            return cachedData
+        }
+
         // エンドポイント (Google Cloud Text-to-Speech)
         let urlString = "https://texttospeech.googleapis.com/v1/text:synthesize?key=\(apiKey)"
         guard let url = URL(string: urlString) else {
@@ -188,6 +195,9 @@ final class GeminiClient {
             throw URLError(.cannotDecodeContentData)
         }
         
+        // 3. キャッシュ保存
+        CacheManager.shared.saveAudio(audioData, key: cacheKey)
+        
         return audioData
     }
     
@@ -197,6 +207,13 @@ final class GeminiClient {
     // MARK: - 機能C: 画像生成 (Imagen 3.0 REST API)
     
     func generateImage(prompt: String) async throws -> Data {
+        // キャッシュ確認
+        let cacheKey = CryptoUtils.sha256Hash(for: "image_imagen-4.0_" + prompt)
+        if let cachedData = CacheManager.shared.getImage(key: cacheKey) {
+            print("🖼️ キャッシュから画像を取得")
+            return cachedData
+        }
+
         guard !APIKeyManager.apiKey.isEmpty else {
             throw GeminiClientError.apiKeyMissing
         }
@@ -250,6 +267,9 @@ final class GeminiClient {
             throw GeminiClientError.invalidData
         }
         
+        // キャッシュ保存
+        CacheManager.shared.saveImage(imageData, key: cacheKey)
+
         return imageData
     }
     
