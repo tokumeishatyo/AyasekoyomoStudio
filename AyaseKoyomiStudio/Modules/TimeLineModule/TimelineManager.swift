@@ -9,6 +9,7 @@ final class TimelineManager: ObservableObject {
     @Published var blocks: [ScriptBlock] = []
     @Published var isProcessing: Bool = false
     @Published var errorMessage: String? = nil
+    @Published var resolution: VideoResolution = .landscape // ★追加: 解像度設定
     
     // APIキー（UIから受け取る）
     var apiKey: String = "" {
@@ -103,7 +104,13 @@ final class TimelineManager: ObservableObject {
             
             // 2. 動画書き出し (シーン情報も渡す！)
             print("🎥 動画レンダリング中...")
-            let videoURL = try await VideoExportManager.shared.exportVideo(audioData: masterAudioData, scenes: scenes)
+            // ★解像度とアバター画像を渡す
+            let videoURL = try await VideoExportManager.shared.exportVideo(
+                audioData: masterAudioData,
+                scenes: scenes,
+                resolution: resolution,
+                avatarImageURL: SceneManager.shared.avatarFaceImageURL
+            )
             
             // 3. 字幕生成 & 翻訳
             print("📝 字幕生成中...")
@@ -180,6 +187,29 @@ final class TimelineManager: ObservableObject {
                 }
             }
         }
+    }
+    
+    // MARK: - 💾 プロジェクト保存・読込 (Save/Load)
+    
+    struct ProjectData: Codable {
+        let blocks: [ScriptBlock]
+        let resolution: VideoResolution
+    }
+    
+    func saveProject(to url: URL) throws {
+        let data = ProjectData(blocks: blocks, resolution: resolution)
+        let jsonData = try JSONEncoder().encode(data)
+        try jsonData.write(to: url)
+        print("💾 プロジェクト保存完了: \(url.path)")
+    }
+    
+    func loadProject(from url: URL) throws {
+        let jsonData = try Data(contentsOf: url)
+        let data = try JSONDecoder().decode(ProjectData.self, from: jsonData)
+        
+        self.blocks = data.blocks
+        self.resolution = data.resolution
+        print("📂 プロジェクト読込完了: \(url.path)")
     }
 }
 

@@ -1,17 +1,29 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AvatarView: View {
     
     @ObservedObject var avatarManager: AvatarManager
+    @ObservedObject var sceneManager = SceneManager.shared // ★追加
+    
+    @State private var showFaceImporter = false
     
     var body: some View {
         VStack(spacing: 0) {
             // Face
             ZStack {
                 // Face background
-                Circle()
-                    .fill(Color.yellow.opacity(0.3))
-                    .frame(width: 200, height: 200)
+                if let url = sceneManager.avatarFaceImageURL, let nsImage = NSImage(contentsOf: url) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 200, height: 200)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(Color.yellow.opacity(0.3))
+                        .frame(width: 200, height: 200)
+                }
                 
                 // Eyes
                 HStack(spacing: 50) {
@@ -23,6 +35,32 @@ struct AvatarView: View {
                 // Mouth
                 MouthView(state: avatarManager.mouthState)
                     .offset(y: 40)
+            }
+            .contextMenu {
+                Button {
+                    showFaceImporter = true
+                } label: {
+                    Label("顔画像を変更...", systemImage: "photo")
+                }
+                
+                if sceneManager.avatarFaceImageURL != nil {
+                    Button(role: .destructive) {
+                        sceneManager.clearAvatarFace()
+                    } label: {
+                        Label("顔画像をリセット", systemImage: "arrow.counterclockwise")
+                    }
+                }
+            }
+            .fileImporter(
+                isPresented: $showFaceImporter,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: false
+            ) { result in
+                if case .success(let urls) = result, let url = urls.first {
+                    guard url.startAccessingSecurityScopedResource() else { return }
+                    try? sceneManager.importAvatarFace(from: url)
+                    url.stopAccessingSecurityScopedResource()
+                }
             }
             
             // Debug label

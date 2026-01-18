@@ -1,39 +1,51 @@
-実装計画 - キャッシュ機能 (非機能要件)
-音声データおよび画像データのローカルキャッシュ機能を実装し、API呼び出し回数の削減とパフォーマンス向上を図ります。
+実装計画 - 最終機能群 (保存・解像度・アセット)
+残りの要件である、プロジェクト保存機能、解像度変更オプション、キャラクター画像アセット対応を実装します。
 
 目標
-音声キャッシュ: 同じテキスト・設定での音声生成時は、ローカル保存されたデータを使用する。
-画像キャッシュ: 同じプロンプト・設定での画像生成時は、ローカル保存されたデータを使用する。
+プロジェクト保存: 編集中のスクリプトと設定を .koyomi ファイル (JSON) として保存・読み込み可能にする。
+解像度変更: 1920x1080 (16:9) と 1080x1080 (1:1) を切り替え可能にする。
+アセット対応: 背景と同様に、アバターの顔画像をインポートして使用可能にする（SF Symbols/シェイプからの脱却）。
 実装内容
-1. 新規ユーティリティ作成
-[NEW] 
-CryptoUtils.swift
-キャッシュキー生成のために、文字列のハッシュ化（SHA256）機能を提供します。
-String の拡張として sha256Hash プロパティなどを実装。
-2. キャッシュ管理クラス作成
-[NEW] 
-CacheManager.swift
-Library/Caches 以下の専用ディレクトリを管理。
-Audio: Library/Caches/AyaseKoyomiStudio/Audio
-Images: Library/Caches/AyaseKoyomiStudio/Images
-API:
-func getAudio(key: String) -> Data?
-func saveAudio(_ data: Data, key: String)
-func getImage(key: String) -> Data?
-func saveImage(_ data: Data, key: String)
-3. GeminiClientへの統合
+1. プロジェクト保存 (.koyomi)
 [MODIFY] 
-GeminiClient.swift
-generateAudio(text:apiKey:):
-キャッシュキー生成: SHA256("voice_ja-JP-Neural2-B_" + text) (など)
-CacheManager に確認 → あれば返却。
-なければAPI呼び出し → 結果を CacheManager に保存してから返却。
-generateImage(prompt:):
-キャッシュキー生成: SHA256("model_imagen-4.0_" + prompt)
-CacheManager に確認 → あれば返却。
-なければAPI呼び出し → 結果を CacheManager に保存してから返却。
+TimelineManager.swift
+Codable対応: ScriptBlock は既にCodableなはず（確認）。
+ProjectData構造体: 保存するデータをまとめる。
+struct ProjectData: Codable {
+    let blocks: [ScriptBlock]
+    let resolution: VideoResolution // 後述
+    // APIキーはセキュリティのため保存しない
+}
+メソッド追加:
+saveProject(videoURL: URL)
+loadProject(url: URL)
+UI: TimelineView に「保存」「開く」ボタンを追加（Toolbar配置などを検討）。
+2. 解像度オプション
+[NEW] 
+VideoResolution.swift
+Enum定義: case landscape (1920x1080), case square (1080x1080)
+[MODIFY] 
+VideoExportManager.swift
+exportVideo メソッドの引数に resolution: VideoResolution を追加。
+現在は 1920x1080 固定になっている箇所を動的に変更。
+[MODIFY] 
+TimelineManager.swift
+@Published var resolution: VideoResolution = .landscape を追加。
+[MODIFY] 
+TimelineView.swift
+フッターまたはヘッダーに解像度選択Pickerを追加。
+3. キャラクター画像アセット
+[MODIFY] 
+SceneManager.swift
+背景同様、キャラクター画像（顔ベース）の管理機能を追加（今回は簡易的に）。
+@Published var avatarFaceImageURL: URL?
+[MODIFY] 
+AvatarView.swift
+SceneManager を参照し、avatarFaceImageURL があれば画像を表示し、なければ Circle (黄色) を描画。
+[MODIFY] 
+VideoExportManager.swift
+drawAvatar メソッドで画像描画に対応。
 検証計画
-動作確認
-初回: テキストを入力して「動画書き出し」あるいは音声生成を行い、API経由で生成されることを確認（ログ等が無いとわからないが、ネットワーク通信が発生する）。
-2回目: 同じテキストで再度実行した際、瞬時に完了すること（キャッシュヒット）を確認する。
-ログ(print)に「キャッシュから取得」と出力させることで確認を容易にする。
+保存/読込: スクリプトを書き、保存してアプリ再起動後に読み込めるか。
+解像度: 1:1 に設定して書き出し、正方形の動画ができるか。
+アセット: 任意の画像を顔として設定し、プレビューと書き出し動画に反映されるか。

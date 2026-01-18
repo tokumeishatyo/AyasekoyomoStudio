@@ -35,9 +35,10 @@ final class VideoExportManager: NSObject {
         }
     }
     
-    // ★★★ 変更点: scenes (指示書リスト) を受け取るように変更 ★★★
-    nonisolated func exportVideo(audioData: Data, scenes: [VideoScene]) async throws -> URL {
-        print("🎥 Export: 開始 (シーン数: \(scenes.count))")
+    // ★★★ 変更点: avatarImageURL 追加 ★★★
+    nonisolated func exportVideo(audioData: Data, scenes: [VideoScene], resolution: VideoResolution, avatarImageURL: URL?) async throws -> URL {
+        let videoSize = resolution.size
+        print("🎥 Export: 開始 (シーン数: \(scenes.count), 解像度: \(resolution.name))")
         
         let tempDir = FileManager.default.temporaryDirectory
         let uuid = UUID().uuidString
@@ -110,14 +111,15 @@ final class VideoExportManager: NSObject {
         if assetReader.canAdd(readerOutput) { assetReader.add(readerOutput) }
         assetReader.startReading()
         
-        let targetVideoSize = self.videoSize
+        let targetVideoSize = videoSize // ローカル変数を使用
         let targetFrameRate = self.frameRate
         
         struct VideoContext: @unchecked Sendable {
             let input: AVAssetWriterInput
             let adaptor: AVAssetWriterInputPixelBufferAdaptor
             let buffer: AVAudioPCMBuffer
-            let scenes: [VideoScene] // ★コンテキストにもシーンを含める
+            let scenes: [VideoScene]
+            let avatarImageURL: URL? // ★追加
         }
         
         struct AudioContext: @unchecked Sendable {
@@ -126,7 +128,7 @@ final class VideoExportManager: NSObject {
         }
         
         // context作成
-        let videoCtx = VideoContext(input: videoInput, adaptor: pixelBufferAdaptor, buffer: audioBuffer, scenes: scenes)
+        let videoCtx = VideoContext(input: videoInput, adaptor: pixelBufferAdaptor, buffer: audioBuffer, scenes: scenes, avatarImageURL: avatarImageURL)
         let audioCtx = AudioContext(input: audioInput, output: readerOutput)
         
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -142,6 +144,7 @@ final class VideoExportManager: NSObject {
                         let adaptor = videoCtx.adaptor
                         let buffer = videoCtx.buffer
                         let scenes = videoCtx.scenes
+                        let avatarURL = videoCtx.avatarImageURL
                         
                         while input.isReadyForMoreMediaData && frameIndex < totalVideoFrames {
                             let time = CMTime(value: CMTimeValue(frameIndex), timescale: targetFrameRate)
@@ -155,7 +158,7 @@ final class VideoExportManager: NSObject {
                             let volume = getVolume(at: seconds, audioBuffer: buffer, sampleRate: sampleRate)
                             
                             // ★感情を渡して描画
-                            if let pixelBuffer = createPixelBuffer(videoSize: targetVideoSize, volume: volume, emotion: emotion, backgroundURL: bgURL) {
+                            if let pixelBuffer = createPixelBuffer(videoSize: targetVideoSize, volume: volume, emotion: emotion, backgroundURL: bgURL, avatarImageURL: avatarURL) {
                                 adaptor.append(pixelBuffer, withPresentationTime: time)
                             }
                             frameIndex += 1
@@ -224,7 +227,7 @@ private func getVolume(at time: Double, audioBuffer: AVAudioPCMBuffer, sampleRat
 }
 
 // ★引数に backgroundURL を追加
-private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String, backgroundURL: URL?) -> CVPixelBuffer? {
+private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String, backgroundURL: URL?, avatarImageURL: URL?) -> CVPixelBuffer? {
     var pb: CVPixelBuffer?
     CVPixelBufferCreate(kCFAllocatorDefault, Int(videoSize.width), Int(videoSize.height), kCVPixelFormatType_32ARGB, nil, &pb)
     guard let buffer = pb else { return nil }
@@ -241,13 +244,13 @@ private func createPixelBuffer(videoSize: CGSize, volume: Float, emotion: String
     )
     
     if let ctx = context {
-        drawAvatar(videoSize: videoSize, context: ctx, volume: volume, emotion: emotion, backgroundURL: backgroundURL)
+        drawAvatar(videoSize: videoSize, context: ctx, volume: volume, emotion: emotion, backgroundURL: backgroundURL, avatarImageURL: avatarImageURL)
     }
     return buffer
 }
 
 // ★背景画像対応
-private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float, emotion: String, backgroundURL: URL?) {
+private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float, emotion: String, backgroundURL: URL?, avatarImageURL: URL?) {
     let w = videoSize.width, h = videoSize.height
     let cx = w/2, cy = h/2
     
@@ -282,11 +285,27 @@ private func drawAvatar(videoSize: CGSize, context: CGContext, volume: Float, em
         context.fill(CGRect(x: 0, y: 0, width: w, height: h))
     }
     
-    // 2. アバター描画 (以降は変更なし)
+    // 2. アバター描画
     
-    // 顔の輪郭
-    context.setFillColor(CGColor(red: 1.0, green: 0.95, blue: 0.7, alpha: 1))
-    context.fillEllipse(in: CGRect(x: cx-300, y: cy-300, width: 600, height: 600))
+    // ★画像がある場合
+    if let avatarURL = avatarImageURL,
+       let nsImage = NSImage(contentsOf: avatarURL),
+       let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        
+        context.saveGState()
+        // 円形クリップ
+        context.addEllipse(in: CGRect(x: cx-300, y: cy-300, width: 600, height: 600))
+        context.clip()
+        
+        // 画像描画
+        context.draw(cgImage, in: CGRect(x: cx-300, y: cy-300, width: 600, height: 600))
+        context.restoreGState()
+        
+    } else {
+        // 顔の輪郭 (デフォルト)
+        context.setFillColor(CGColor(red: 1.0, green: 0.95, blue: 0.7, alpha: 1))
+        context.fillEllipse(in: CGRect(x: cx-300, y: cy-300, width: 600, height: 600))
+    }
     
     // 目: 感情によって形や色を変える
     context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))

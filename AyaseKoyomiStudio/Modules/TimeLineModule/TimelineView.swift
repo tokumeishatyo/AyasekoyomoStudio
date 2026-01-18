@@ -1,4 +1,31 @@
 import SwiftUI
+import UniformTypeIdentifiers
+
+// MARK: - Document Type
+struct ProjectDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    
+    var blocks: [ScriptBlock]
+    var resolution: VideoResolution
+    
+    init(blocks: [ScriptBlock], resolution: VideoResolution) {
+        self.blocks = blocks
+        self.resolution = resolution
+    }
+    
+    init(configuration: ReadConfiguration) throws {
+        let data = try configuration.file.regularFileContents ?? Data()
+        let projectData = try JSONDecoder().decode(TimelineManager.ProjectData.self, from: data)
+        self.blocks = projectData.blocks
+        self.resolution = projectData.resolution
+    }
+    
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        let projectData = TimelineManager.ProjectData(blocks: blocks, resolution: resolution)
+        let data = try JSONEncoder().encode(projectData)
+        return FileWrapper(regularFileWithContents: data)
+    }
+}
 
 // MARK: - 1行分のビュー (変更なし)
 struct ScriptRowView: View {
@@ -100,13 +127,66 @@ struct ScriptRowView: View {
 // MARK: - メイン画面
 struct TimelineView: View {
     @StateObject private var manager = TimelineManager()
-    
-    // ★修正: AppStorage(保存)をやめ、State(一時保持)に戻しました
     @State private var apiKey: String = ""
+    
+    // Save/Load States
+    @State private var showSaveDialog = false
+    @State private var showLoadDialog = false
     
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                
+                // MARK: - Header (Toolbar)
+                HStack {
+                    Text("Ayase Koyomi Studio")
+                        .font(.headline)
+                    
+                    Spacer()
+                    
+                    // 解像度選択
+                    Picker("解像度", selection: $manager.resolution) {
+                        ForEach(VideoResolution.allCases) { res in
+                            Text(res.name).tag(res)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                    
+                    // 保存ボタン
+                    Button(action: { showSaveDialog = true }) {
+                        Label("保存", systemImage: "square.and.arrow.down")
+                    }
+                    .fileExporter(
+                        isPresented: $showSaveDialog,
+                        document: ProjectDocument(blocks: manager.blocks, resolution: manager.resolution),
+                        contentType: .json,
+                        defaultFilename: "project.koyomi"
+                    ) { result in
+                        if case .success(let url) = result {
+                            try? manager.saveProject(to: url)
+                        }
+                    }
+                    
+                    // 読込ボタン
+                    Button(action: { showLoadDialog = true }) {
+                        Label("開く", systemImage: "square.and.arrow.up")
+                    }
+                    .fileImporter(
+                        isPresented: $showLoadDialog,
+                        allowedContentTypes: [.json],
+                        allowsMultipleSelection: false
+                    ) { result in
+                        if case .success(let urls) = result, let url = urls.first {
+                            guard url.startAccessingSecurityScopedResource() else { return }
+                            try? manager.loadProject(from: url)
+                            url.stopAccessingSecurityScopedResource()
+                        }
+                    }
+                }
+                .padding()
+                .background(Color(NSColor.controlBackgroundColor))
+                
                 // リストエリア
                 List {
                     ForEach($manager.blocks) { $block in
